@@ -1,165 +1,167 @@
 [
-  {
-    "id": "flow1",
-    "type": "tab",
-    "label": "Вариант 22. Загрузка лога",
-    "disabled": false,
-    "info": ""
-  },
-  {
-    "id": "n_watch",
-    "type": "watch",
-    "z": "flow1",
-    "name": "Следить за data/log.txt",
-    "files": "${PROJECT}data/log.txt",
-    "recursive": false,
-    "x": 150,
-    "y": 80,
-    "wires": [
-      [
-        "n_read"
-      ]
-    ]
-  },
-  {
-    "id": "n_inj",
-    "type": "inject",
-    "z": "flow1",
-    "name": "Загрузить лог вручную",
-    "props": [
-      {
-        "p": "payload"
-      }
-    ],
-    "repeat": "",
-    "crontab": "",
-    "once": false,
-    "onceDelay": 0.1,
-    "topic": "",
-    "payload": "",
-    "payloadType": "date",
-    "x": 160,
-    "y": 160,
-    "wires": [
-      [
-        "n_read"
-      ]
-    ]
-  },
-  {
-    "id": "n_read",
-    "type": "file in",
-    "z": "flow1",
-    "name": "Читать data/log.txt",
-    "filename": "${PROJECT}data/log.txt",
-    "filenameType": "str",
-    "format": "utf8",
-    "chunk": false,
-    "sendError": false,
-    "encoding": "none",
-    "allProps": false,
-    "x": 380,
-    "y": 120,
-    "wires": [
-      [
-        "n_fn"
-      ]
-    ]
-  },
-  {
-    "id": "n_fn",
-    "type": "function",
-    "z": "flow1",
-    "name": "Разбор лога",
-    "func": "// msg.payload — весь текст лога одной строкой\nconst T = 2;                                   // период опроса, с\nconst RANGES = { s1: [0, 100], s2: [0, 100], s3: [0, 10] };\nconst text = String(msg.payload).replace(/^﻿/, '');\nconst sql = [];\ntext.split(/\\r?\\n/).forEach(raw => {\n  const line = raw.trim();\n  if (!line) return;\n  // строка вида DATA n=3 s1=22.0: делим по пробелам, затем по знаку =\n  const parts = line.split(' ');\n  const kind = parts[0];                       // DATA или EVENT\n  const f = {};\n  parts.slice(1).forEach(p => {\n    const kv = p.split('=');\n    f[kv[0]] = kv[1];\n  });\n  const n = parseInt(f.n);\n  if (isNaN(n)) return;\n  const t = n * T;\n  if (kind === 'DATA') {\n    ['s1', 's2', 's3'].forEach(s => {\n      const v = parseFloat(f[s]);\n      if (!isNaN(v)) {\n        sql.push(`INSERT INTO readings(n,t_s,sensor,value) VALUES(${n},${t},'${s}',${v});`);\n      }\n      if (isNaN(v) || v < RANGES[s][0] || v > RANGES[s][1]) {\n        sql.push(`INSERT INTO events(n,t_s,type,message) VALUES(${n},${t},'FAULT','датчик ${s} вне диапазона');`);\n      }\n    });\n  } else if (kind === 'EVENT') {\n    sql.push(`INSERT INTO events(n,t_s,type,message) VALUES(${n},${t},'${f.type}','');`);\n  }\n});\n// выход 1: по одной команде (для необязательного узла sqlite)\nconst toSqlite = sql.map(s => ({ topic: s.slice(0, -1) }));\n// выход 2: один файл load.sql (сначала очищает таблицы, поэтому повторная загрузка не дублирует данные)\nconst head = 'BEGIN;\\nDELETE FROM readings;\\nDELETE FROM events;\\n' +\n  \"DELETE FROM sqlite_sequence WHERE name IN ('readings','events');\\n\";\nconst toFile = { payload: head + sql.join('\\n') + '\\nCOMMIT;\\n' };\nreturn [toSqlite, toFile];\n",
-    "outputs": 2,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 580,
-    "y": 120,
-    "wires": [
-      [],
-      [
-        "n_file"
-      ]
-    ]
-  },
-  {
-    "id": "n_file",
-    "type": "file",
-    "z": "flow1",
-    "name": "Записать db/load.sql",
-    "filename": "${PROJECT}db/load.sql",
-    "filenameType": "str",
-    "appendNewline": false,
-    "createDir": true,
-    "overwriteFile": "true",
-    "encoding": "none",
-    "x": 810,
-    "y": 120,
-    "wires": [
-      [
-        "n_exec"
-      ]
-    ]
-  },
-  {
-    "id": "n_exec",
-    "type": "exec",
-    "z": "flow1",
-    "command": "sqlite3 \"${PROJECT}db/variant.db\" \".read ${PROJECT}db/schema.sql\" \".read ${PROJECT}db/load.sql\"",
-    "addpay": "",
-    "append": "",
-    "useSpawn": "false",
-    "timer": "",
-    "winHide": false,
-    "oldrc": false,
-    "name": "Загрузить в базу",
-    "x": 1030,
-    "y": 120,
-    "wires": [
-      [
-        "n_dbg1"
-      ],
-      [
-        "n_dbg2"
-      ],
-      [
-        "n_dbg2"
-      ]
-    ]
-  },
-  {
-    "id": "n_dbg1",
-    "type": "debug",
-    "z": "flow1",
-    "name": "Ответ sqlite3",
-    "active": true,
-    "tosidebar": true,
-    "console": false,
-    "tostatus": false,
-    "complete": "payload",
-    "targetType": "msg",
-    "x": 1250,
-    "y": 80,
-    "wires": []
-  },
-  {
-    "id": "n_dbg2",
-    "type": "debug",
-    "z": "flow1",
-    "name": "Ошибки sqlite3",
-    "active": true,
-    "tosidebar": true,
-    "console": false,
-    "tostatus": false,
-    "complete": "payload",
-    "targetType": "msg",
-    "x": 1250,
-    "y": 160,
-    "wires": []
-  }
+    {
+        "id": "flow1",
+        "type": "tab",
+        "label": "Вариант 22. Загрузка лога",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "n_watch",
+        "type": "watch",
+        "z": "flow1",
+        "name": "Следить за data/log.txt",
+        "files": "G:\\sharafutdinova\\data\\log.txt",
+        "recursive": false,
+        "x": 150,
+        "y": 80,
+        "wires": [
+            [
+                "n_read"
+            ]
+        ]
+    },
+    {
+        "id": "n_inj",
+        "type": "inject",
+        "z": "flow1",
+        "name": "Загрузить лог вручную",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 160,
+        "y": 160,
+        "wires": [
+            [
+                "n_read"
+            ]
+        ]
+    },
+    {
+        "id": "n_read",
+        "type": "file in",
+        "z": "flow1",
+        "name": "Читать data/log.txt",
+        "filename": "G:\\sharafutdinova\\data\\log.txt",
+        "filenameType": "str",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": false,
+        "encoding": "none",
+        "allProps": false,
+        "x": 380,
+        "y": 120,
+        "wires": [
+            [
+                "n_fn"
+            ]
+        ]
+    },
+    {
+        "id": "n_fn",
+        "type": "function",
+        "z": "flow1",
+        "name": "Разбор лога",
+        "func": "// msg.payload — весь текст лога одной строкой\nconst T = 2;                                   // период опроса, с\nconst RANGES = { s1: [0, 100], s2: [0, 100], s3: [0, 10] };\nconst text = String(msg.payload).replace(/^﻿/, '');\nconst sql = [];\ntext.split(/\\r?\\n/).forEach(raw => {\n  const line = raw.trim();\n  if (!line) return;\n  // строка вида DATA n=3 s1=22.0: делим по пробелам, затем по знаку =\n  const parts = line.split(' ');\n  const kind = parts[0];                       // DATA или EVENT\n  const f = {};\n  parts.slice(1).forEach(p => {\n    const kv = p.split('=');\n    f[kv[0]] = kv[1];\n  });\n  const n = parseInt(f.n);\n  if (isNaN(n)) return;\n  const t = n * T;\n  if (kind === 'DATA') {\n    ['s1', 's2', 's3'].forEach(s => {\n      const v = parseFloat(f[s]);\n      if (!isNaN(v)) {\n        sql.push(`INSERT INTO readings(n,t_s,sensor,value) VALUES(${n},${t},'${s}',${v});`);\n      }\n      if (isNaN(v) || v < RANGES[s][0] || v > RANGES[s][1]) {\n        sql.push(`INSERT INTO events(n,t_s,type,message) VALUES(${n},${t},'FAULT','датчик ${s} вне диапазона');`);\n      }\n    });\n  } else if (kind === 'EVENT') {\n    sql.push(`INSERT INTO events(n,t_s,type,message) VALUES(${n},${t},'${f.type}','');`);\n  }\n});\n// выход 1: по одной команде (для необязательного узла sqlite)\nconst toSqlite = sql.map(s => ({ topic: s.slice(0, -1) }));\n// выход 2: один файл load.sql (сначала очищает таблицы, поэтому повторная загрузка не дублирует данные)\nconst head = 'BEGIN;\\nDELETE FROM readings;\\nDELETE FROM events;\\n' +\n  \"DELETE FROM sqlite_sequence WHERE name IN ('readings','events');\\n\";\nconst toFile = { payload: head + sql.join('\\n') + '\\nCOMMIT;\\n' };\nreturn [toSqlite, toFile];\n",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 580,
+        "y": 120,
+        "wires": [
+            [],
+            [
+                "n_file"
+            ]
+        ]
+    },
+    {
+        "id": "n_file",
+        "type": "file",
+        "z": "flow1",
+        "name": "Записать db/load.sql",
+        "filename": "G:\\sharafutdinova\\db\\load.sql",
+        "filenameType": "str",
+        "appendNewline": false,
+        "createDir": true,
+        "overwriteFile": "true",
+        "encoding": "none",
+        "x": 810,
+        "y": 120,
+        "wires": [
+            [
+                "n_exec"
+            ]
+        ]
+    },
+    {
+        "id": "n_exec",
+        "type": "exec",
+        "z": "flow1",
+        "command": "G:\\tools\\sqlite\\sqlite3.exe \"G:\\sharafutdinova\\db\\variant.db\" \".read G:\\sharafutdinova\\db\\schema.sql\" \".read G:\\sharafutdinova\\db\\load.sql\"",
+        "addpay": "",
+        "append": "",
+        "useSpawn": "false",
+        "timer": "",
+        "winHide": false,
+        "oldrc": false,
+        "name": "Загрузить в базу",
+        "x": 1030,
+        "y": 120,
+        "wires": [
+            [
+                "n_dbg1"
+            ],
+            [
+                "n_dbg2"
+            ],
+            [
+                "n_dbg2"
+            ]
+        ]
+    },
+    {
+        "id": "n_dbg1",
+        "type": "debug",
+        "z": "flow1",
+        "name": "Ответ sqlite3",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "x": 1250,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "n_dbg2",
+        "type": "debug",
+        "z": "flow1",
+        "name": "Ошибки sqlite3",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1250,
+        "y": 160,
+        "wires": []
+    }
 ]
